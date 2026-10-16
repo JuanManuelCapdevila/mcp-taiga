@@ -1,6 +1,4 @@
-export const DEFAULT_API_URL = "https://api.taiga.io/api/v1";
-
-export const API_BASE_URL = (process.env.TAIGA_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
+export const API_BASE_URL = (process.env.TAIGA_API_URL ?? "").replace(/\/+$/, "");
 
 // Maximum size (in characters) of a tool's text response before it gets truncated.
 export const CHARACTER_LIMIT = 25000;

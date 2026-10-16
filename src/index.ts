@@ -2,7 +2,7 @@
 /**
  * MCP server for the Taiga project management API.
  *
- * Authenticates as a single Taiga user (TAIGA_USERNAME/TAIGA_PASSWORD) and exposes
+ * Authenticates as a single Taiga user (TAIGA_API_URL/TAIGA_USERNAME/TAIGA_PASSWORD) and exposes
  * tools for projects, user stories, tasks, issues, epics, milestones, memberships,
  * comments and search. Permissions are NOT re-implemented here: every tool call is
  * forwarded to Taiga as-is, so the server can only do what that user's project role
@@ -27,6 +27,7 @@ function assertEnv(name: string): void {
   }
 }
 
+assertEnv("TAIGA_API_URL");
 assertEnv("TAIGA_USERNAME");
 assertEnv("TAIGA_PASSWORD");
 

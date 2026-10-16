@@ -19,16 +19,16 @@ Because permissions are enforced by Taiga itself per request, this also means pe
 ```bash
 npm install
 npm run build
-cp .env.example .env   # then fill in TAIGA_USERNAME / TAIGA_PASSWORD
+cp .env.example .env   # then fill in TAIGA_API_URL / TAIGA_USERNAME / TAIGA_PASSWORD
 ```
 
-Environment variables:
+Environment variables (all required — the server exits on startup if any is missing):
 
 | Variable | Required | Description |
 |---|---|---|
+| `TAIGA_API_URL` | yes | Base API URL. Use `https://api.taiga.io/api/v1` for Taiga Cloud, or your self-hosted instance's own `/api/v1` path |
 | `TAIGA_USERNAME` | yes | Username or email of the Taiga account this server acts as |
 | `TAIGA_PASSWORD` | yes | Password for that account |
-| `TAIGA_API_URL` | no | Base API URL, defaults to `https://api.taiga.io/api/v1`. Point this at your self-hosted instance's `/api/v1` path if applicable |
 
 ### Run with an MCP client (e.g. Claude Code / Claude Desktop)
 
@@ -41,6 +41,7 @@ Add to your client's MCP server config:
       "command": "node",
       "args": ["/absolute/path/to/mcp-taiga/dist/index.js"],
       "env": {
+        "TAIGA_API_URL": "https://api.taiga.io/api/v1",
         "TAIGA_USERNAME": "your-bot-user",
         "TAIGA_PASSWORD": "your-bot-password"
       }
@@ -67,6 +68,7 @@ This is a stdio MCP server, so it must be run with `-i` (interactive, keeps stdi
 
 ```bash
 docker run -i --rm \
+  -e TAIGA_API_URL=https://api.taiga.io/api/v1 \
   -e TAIGA_USERNAME=your-bot-user \
   -e TAIGA_PASSWORD=your-bot-password \
   taiga-mcp-server
@@ -87,11 +89,13 @@ MCP client config using Docker instead of a local Node install:
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
+        "-e", "TAIGA_API_URL",
         "-e", "TAIGA_USERNAME",
         "-e", "TAIGA_PASSWORD",
         "taiga-mcp-server"
       ],
       "env": {
+        "TAIGA_API_URL": "https://api.taiga.io/api/v1",
         "TAIGA_USERNAME": "your-bot-user",
         "TAIGA_PASSWORD": "your-bot-password"
       }

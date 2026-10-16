@@ -22,13 +22,23 @@ npm run build
 cp .env.example .env   # then fill in TAIGA_API_URL / TAIGA_USERNAME / TAIGA_PASSWORD
 ```
 
-Environment variables (all required — the server exits on startup if any is missing):
+Environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
 | `TAIGA_API_URL` | yes | Base API URL. Use `https://api.taiga.io/api/v1` for Taiga Cloud, or your self-hosted instance's own `/api/v1` path |
 | `TAIGA_USERNAME` | yes | Username or email of the Taiga account this server acts as |
 | `TAIGA_PASSWORD` | yes | Password for that account |
+| `TRANSPORT` | no | `stdio` (default) or `http` — see [Transports](#transports) below |
+| `PORT` | no, `http` only | Port to listen on (default `3000`) |
+| `MCP_BEARER_TOKEN` | yes, `http` only | Shared secret remote clients must send as `Authorization: Bearer <token>` |
+
+The server exits on startup if a required variable for the selected transport is missing.
+
+## Transports
+
+- **stdio** (default): the client spawns this process directly and talks JSON-RPC over stdin/stdout. Use this for local clients — Claude Desktop, Claude Code, `npm run inspector`. No network port is opened.
+- **http**: serves [MCP Streamable HTTP](https://modelcontextprotocol.io/) at `POST /mcp` on `$PORT`, protected by a static bearer token (plus an unauthenticated `GET /healthz` for platform health checks). Use this to run the server as an always-on remote service — e.g. for ChatGPT's custom MCP connectors — behind a host that terminates HTTPS (see CapRover below). The bearer token is a simple shared-secret gate in front of the server, not a substitute for Taiga's own per-project permissions described above: anyone with the token can call every tool this server exposes, exactly as the configured Taiga bot user is allowed to.
 
 ### Run with an MCP client (e.g. Claude Code / Claude Desktop)
 
@@ -105,6 +115,26 @@ MCP client config using Docker instead of a local Node install:
 ```
 
 (`-e TAIGA_USERNAME` without a value forwards the variable from the `env` block above into the container.)
+
+### Remote deployment (CapRover) for ChatGPT custom connectors
+
+To run this as an always-on remote MCP server — e.g. so ChatGPT's custom connector settings can reach it — deploy the same image with `TRANSPORT=http`:
+
+1. In CapRover, create a new app (e.g. `taiga-mcp`), enable **HTTPS** and **Force HTTPS** so the token isn't sent in plaintext.
+2. Set the app's **Container HTTP Port** to `3000` (or whatever you set `PORT` to).
+3. App Configs → Environment Variables:
+   ```
+   TAIGA_API_URL=https://api.taiga.io/api/v1
+   TAIGA_USERNAME=your-bot-user
+   TAIGA_PASSWORD=your-bot-password
+   TRANSPORT=http
+   PORT=3000
+   MCP_BEARER_TOKEN=<generate with: openssl rand -hex 32>
+   ```
+4. Deploy the image built in the GHCR steps above (CapRover → Deploy from Docker Registry, point it at `ghcr.io/<owner>/<image>:latest`).
+5. In ChatGPT's connector settings, add a custom MCP connector pointing at `https://taiga-mcp.<your-caprover-domain>/mcp`, with the `Authorization: Bearer <MCP_BEARER_TOKEN>` header. Whether your ChatGPT plan currently supports adding custom MCP connectors depends on OpenAI's rollout — check your account's Connectors/Apps settings first.
+
+`GET /healthz` (no auth) is there for CapRover's own health check if you want to configure one.
 
 ## Tools
 

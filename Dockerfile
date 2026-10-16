@@ -17,6 +17,9 @@ COPY --from=build /app/dist ./dist
 
 USER node
 
-# This is an MCP stdio server: the client speaks JSON-RPC over stdin/stdout,
-# so it must be run with `docker run -i` and credentials passed via -e/--env-file.
+# Only used when TRANSPORT=http; ignored (and no port opened) for the default stdio mode.
+EXPOSE 3000
+
+# Transport defaults to stdio (JSON-RPC over stdin/stdout, run with `docker run -i`).
+# Set TRANSPORT=http to instead serve Streamable HTTP on $PORT at POST /mcp.
 ENTRYPOINT ["node", "dist/index.js"]

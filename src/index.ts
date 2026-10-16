@@ -108,7 +108,10 @@ async function runHttp(): Promise<void> {
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.listen(port, () => {
+  // Bind explicitly to 0.0.0.0: Express defaults to the IPv6 wildcard ("::"), which some
+  // container network setups (e.g. Docker Swarm's overlay network, used by CapRover) don't
+  // route IPv4 traffic to, causing the reverse proxy to see the app as unreachable (502).
+  app.listen(port, "0.0.0.0", () => {
     console.error(`Taiga MCP server running via Streamable HTTP on port ${port} (POST /mcp)`);
   });
 }

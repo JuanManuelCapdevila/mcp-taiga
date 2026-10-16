@@ -31,14 +31,26 @@ Environment variables:
 | `TAIGA_PASSWORD` | yes | Password for that account |
 | `TRANSPORT` | no | `stdio` (default) or `http` — see [Transports](#transports) below |
 | `PORT` | no, `http` only | Port to listen on (default `3000`) |
-| `MCP_BEARER_TOKEN` | yes, `http` only | Shared secret remote clients must send as `Authorization: Bearer <token>` |
+| `MCP_BEARER_TOKEN` | yes, `http` only | The one secret in the system: password on the OAuth login form **and** the static bearer token (`Authorization: Bearer <token>`) for clients that don't speak OAuth |
+| `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | yes, `http` only | Fixed client credentials for the OAuth "user-defined client" flow — make these up and paste the same values into the client's connector setup |
+| `OAUTH_ALLOWED_REDIRECT_PREFIX` | no, `http` only | Only `redirect_uri`s starting with this are accepted by `/authorize`. Defaults to ChatGPT's connector callback prefix (`https://chatgpt.com/connector/oauth/`) |
 
 The server exits on startup if a required variable for the selected transport is missing.
 
 ## Transports
 
 - **stdio** (default): the client spawns this process directly and talks JSON-RPC over stdin/stdout. Use this for local clients — Claude Desktop, Claude Code, `npm run inspector`. No network port is opened.
-- **http**: serves [MCP Streamable HTTP](https://modelcontextprotocol.io/) at `POST /mcp` on `$PORT`, protected by a static bearer token (plus an unauthenticated `GET /healthz` for platform health checks). Use this to run the server as an always-on remote service — e.g. for ChatGPT's custom MCP connectors — behind a host that terminates HTTPS (see CapRover below). The bearer token is a simple shared-secret gate in front of the server, not a substitute for Taiga's own per-project permissions described above: anyone with the token can call every tool this server exposes, exactly as the configured Taiga bot user is allowed to.
+- **http**: serves [MCP Streamable HTTP](https://modelcontextprotocol.io/) at `POST /mcp` on `$PORT` (plus an unauthenticated `GET /healthz` for platform health checks). Use this to run the server as an always-on remote service behind a host that terminates HTTPS (see CapRover below). `MCP_BEARER_TOKEN` is a simple shared-secret gate in front of the server, not a substitute for Taiga's own per-project permissions described above: anyone who can authenticate (directly with the token, or via the OAuth dance below) can call every tool this server exposes, exactly as the configured Taiga bot user is allowed to.
+
+Two ways to authenticate against `POST /mcp`:
+
+1. **Direct bearer token** — for clients that support a plain static token: send `Authorization: Bearer <MCP_BEARER_TOKEN>` yourself. This is what the stdio-equivalent `curl` examples above use.
+2. **OAuth 2.1 (Authorization Code + PKCE)** — for clients that only support OAuth, like ChatGPT's custom connectors (no plain API-key option in their UI). The server implements a minimal, single-tenant authorization server (`src/oauth.ts`):
+   - `GET /.well-known/oauth-authorization-server` and `GET /.well-known/oauth-protected-resource` — metadata so clients can auto-discover the endpoints below.
+   - `GET/POST /authorize` — shows a one-field login page; the "password" is `MCP_BEARER_TOKEN`.
+   - `POST /token` — exchanges the authorization code (with PKCE) for an access token, which **is** `MCP_BEARER_TOKEN`.
+
+   There's intentionally no dynamic client registration and no refresh tokens — `OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET` are a fixed pair you invent and enter manually on both sides, and the issued token has a long expiry instead of rotating. This is a pragmatic simplification for a single operator/single Taiga identity, not a general-purpose multi-tenant OAuth server.
 
 ### Run with an MCP client (e.g. Claude Code / Claude Desktop)
 
@@ -120,7 +132,7 @@ MCP client config using Docker instead of a local Node install:
 
 To run this as an always-on remote MCP server — e.g. so ChatGPT's custom connector settings can reach it — deploy the same image with `TRANSPORT=http`:
 
-1. In CapRover, create a new app (e.g. `taiga-mcp`), enable **HTTPS** and **Force HTTPS** so the token isn't sent in plaintext.
+1. In CapRover, create a new app (e.g. `taiga-mcp`), enable **HTTPS** and **Force HTTPS** so tokens aren't sent in plaintext.
 2. Set the app's **Container HTTP Port** to `3000` (or whatever you set `PORT` to).
 3. App Configs → Environment Variables:
    ```
@@ -130,9 +142,24 @@ To run this as an always-on remote MCP server — e.g. so ChatGPT's custom conne
    TRANSPORT=http
    PORT=3000
    MCP_BEARER_TOKEN=<generate with: openssl rand -hex 32>
+   OAUTH_CLIENT_ID=<generate with: openssl rand -hex 16>
+   OAUTH_CLIENT_SECRET=<generate with: openssl rand -hex 32>
    ```
 4. Deploy the image built in the GHCR steps above (CapRover → Deploy from Docker Registry, point it at `ghcr.io/<owner>/<image>:latest`).
-5. In ChatGPT's connector settings, add a custom MCP connector pointing at `https://taiga-mcp.<your-caprover-domain>/mcp`, with the `Authorization: Bearer <MCP_BEARER_TOKEN>` header. Whether your ChatGPT plan currently supports adding custom MCP connectors depends on OpenAI's rollout — check your account's Connectors/Apps settings first.
+5. Sanity-check it's up:
+   ```bash
+   curl https://taiga-mcp.<your-caprover-domain>/healthz
+   curl https://taiga-mcp.<your-caprover-domain>/.well-known/oauth-authorization-server
+   ```
+
+**Connecting ChatGPT (custom connector, OAuth):**
+
+1. ChatGPT → Settings → Connectors → Create → fill in Name/Description.
+2. **Connection → URL del servidor**: `https://taiga-mcp.<your-caprover-domain>/mcp` (the MCP server's own URL — **not** `TAIGA_API_URL`).
+3. **Autenticación**: `OAuth`.
+4. Click **Reintentar la detección** — it should now auto-fill the authorization/token endpoints from this server's `/.well-known/oauth-authorization-server`. If it doesn't, fill "Configuración avanzada de OAuth" manually with the `/authorize`, `/token` and `/.well-known/oauth-authorization-server` URLs above.
+5. **Registro del cliente**: "Cliente OAuth definido por el usuario" → paste your `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` into the matching fields.
+6. Save, then authorize: ChatGPT redirects to this server's login page — enter `MCP_BEARER_TOKEN` as the "password" to complete the connection.
 
 `GET /healthz` (no auth) is there for CapRover's own health check if you want to configure one.
 

@@ -10,13 +10,17 @@
  *
  * Supports two transports, selected via TRANSPORT:
  *   - "stdio" (default): for local clients (Claude Desktop/Code) that spawn this as a subprocess.
- *   - "http": for remote clients (e.g. a ChatGPT custom connector) over Streamable HTTP.
- *     Requires MCP_BEARER_TOKEN; requests must send `Authorization: Bearer <token>`.
+ *   - "http": for remote clients over Streamable HTTP. Every request to POST /mcp must carry
+ *     `Authorization: Bearer <MCP_BEARER_TOKEN>`. Clients that only support a static bearer
+ *     token can use that directly; clients that only support OAuth (e.g. ChatGPT's custom
+ *     connectors) can instead go through the minimal OAuth 2.1 dance in oauth.ts, which ends
+ *     up handing out that same MCP_BEARER_TOKEN as the access_token.
  */
 import express, { NextFunction, Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { registerOAuthRoutes } from "./oauth.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { registerUserStoryTools } from "./tools/userstories.js";
 import { registerTaskTools } from "./tools/tasks.js";
@@ -63,20 +67,32 @@ async function runStdio(): Promise<void> {
 
 async function runHttp(): Promise<void> {
   const bearerToken = assertEnv("MCP_BEARER_TOKEN");
+  assertEnv("OAUTH_CLIENT_ID");
+  assertEnv("OAUTH_CLIENT_SECRET");
   const port = Number.parseInt(process.env.PORT || "3000", 10);
 
   const app = express();
-  app.use(express.json());
+  // CapRover terminates TLS and forwards plain HTTP internally; trust its X-Forwarded-*
+  // headers so req.protocol/req.get('host') are correct when building OAuth/metadata URLs.
+  app.set("trust proxy", true);
 
   function requireBearerToken(req: Request, res: Response, next: NextFunction): void {
     const header = req.header("authorization") ?? "";
     const [scheme, token] = header.split(" ");
     if (scheme !== "Bearer" || token !== bearerToken) {
-      res.status(401).set("WWW-Authenticate", "Bearer").json({ error: "Unauthorized" });
+      const resourceMetadataUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-protected-resource`;
+      res
+        .status(401)
+        .set("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`)
+        .json({ error: "Unauthorized" });
       return;
     }
     next();
   }
+
+  // OAuth routes register their own body parsers; mount before the global JSON parser below.
+  registerOAuthRoutes(app);
+  app.use(express.json());
 
   // Unauthenticated health check for the host platform's readiness probe.
   app.get("/healthz", (_req, res) => res.status(200).send("ok"));

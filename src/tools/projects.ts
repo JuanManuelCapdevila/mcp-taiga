@@ -33,7 +33,9 @@ interface ProjectDetail extends ProjectSummary {
   priorities: Array<{ id: number; name: string }>;
   issue_types: Array<{ id: number; name: string }>;
   issue_statuses: Array<{ id: number; name: string; is_closed: boolean }>;
-  user_story_statuses: Array<{ id: number; name: string; is_closed: boolean }>;
+  user_story_statuses?: Array<{ id: number; name: string; is_closed: boolean }>;
+  us_statuses?: Array<{ id: number; name: string; is_closed: boolean }>;
+  swimlanes?: Array<{ id: number; name: string }> | null;
   task_statuses: Array<{ id: number; name: string; is_closed: boolean }>;
   epic_statuses: Array<{ id: number; name: string; is_closed: boolean }>;
   members: Array<{ id: number; username: string; full_name_display: string; role_name: string }>;
@@ -64,7 +66,6 @@ export function registerProjectTools(server: McpServer): void {
   const ListProjectsSchema = z
     .object({
       query: z.string().optional().describe("Free-text search over project name/description"),
-      member: z.number().int().optional().describe("Filter to projects where this user ID is a member"),
       ...PaginationInputSchema,
       response_format: responseFormatField,
     })
@@ -75,12 +76,10 @@ export function registerProjectTools(server: McpServer): void {
     {
       title: "Taiga: List Projects",
       description:
-        "Lists Taiga projects visible to the authenticated user, optionally filtered by free-text search or member. " +
-        "Only returns projects the authenticated user can actually see in Taiga (private projects you are not a " +
-        "member of will not appear).\n\n" +
+        "Lists the Taiga projects the authenticated user is a member of, optionally filtered by free-text search. " +
+        "Public projects the user does not participate in are intentionally excluded.\n\n" +
         "Args:\n" +
         "  - query (string, optional): free-text search over name/description\n" +
-        "  - member (number, optional): filter to projects a given user ID belongs to\n" +
         "  - page (number, default 1), page_size (number, default 25, max 100)\n" +
         "  - response_format ('markdown' | 'json', default 'markdown')\n\n" +
         "Returns: paginated list with id, name, slug, description, is_private, total_milestones per project.\n\n" +
@@ -92,7 +91,7 @@ export function registerProjectTools(server: McpServer): void {
     async (params) => {
       try {
         const { data, pagination } = await taigaClient.request<ProjectSummary[]>("GET", "/projects", {
-          params: { q: params.query, member: params.member, page: params.page, page_size: params.page_size },
+          params: { q: params.query, page: params.page, page_size: params.page_size },
         });
         const output = buildListOutput(data, pagination, params.page, params.page_size);
 
@@ -157,7 +156,10 @@ export function registerProjectTools(server: McpServer): void {
             `Backlog: ${data.is_backlog_activated} | Kanban: ${data.is_kanban_activated} | Wiki: ${data.is_wiki_activated} | Issues: ${data.is_issues_activated}`,
             "",
             `## User Story Statuses`,
-            ...data.user_story_statuses.map((s) => `- ${s.name} (id: ${s.id}${s.is_closed ? ", closed" : ""})`),
+            ...(data.us_statuses ?? data.user_story_statuses ?? []).map((s) => `- ${s.name} (id: ${s.id}${s.is_closed ? ", closed" : ""})`),
+            "",
+            `## Swimlanes`,
+            ...(data.swimlanes ?? []).map((s) => `- ${s.name} (id: ${s.id})`),
             "",
             `## Task Statuses`,
             ...data.task_statuses.map((s) => `- ${s.name} (id: ${s.id}${s.is_closed ? ", closed" : ""})`),

@@ -27,6 +27,12 @@ export interface PaginationInfo {
   resultsPerPage?: number;
 }
 
+interface RequestOptions {
+  data?: unknown;
+  params?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
 export interface TaigaResponse<T> {
   data: T;
   pagination: PaginationInfo;
@@ -54,6 +60,8 @@ class TaigaClient {
   private readonly http: AxiosInstance;
   private auth: AuthState | null = null;
   private loginPromise: Promise<AuthState> | null = null;
+  private memberCache: { userId: number; projectIds: Set<number>; expires: number } | null = null;
+  private readonly itemProjectCache = new Map<string, number>();
 
   constructor() {
     this.http = axios.create({
@@ -141,7 +149,89 @@ class TaigaClient {
   async request<T = unknown>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    options: { data?: unknown; params?: Record<string, unknown>; headers?: Record<string, string> } = {}
+    options: RequestOptions = {}
+  ): Promise<TaigaResponse<T>> {
+    const guarded = await this.applyMembershipGuard(method, path, options);
+    const response = await this.rawRequest<T>(method, path, guarded);
+    if (path === "/projects/by_slug") {
+      await this.assertMemberOf((response.data as { id: number }).id);
+    }
+    return response;
+  }
+
+  /**
+   * Restricts this server to projects the authenticated user is a *member* of.
+   * Taiga also exposes public projects to non-members; those are hidden here:
+   * the project list is forced to member=me, and any request that targets a
+   * project (directly, or through the item it belongs to) is rejected otherwise.
+   */
+  private async applyMembershipGuard(method: string, path: string, options: RequestOptions): Promise<RequestOptions> {
+    if (path === "/projects" && method === "GET") {
+      const { userId } = await this.memberships();
+      return { ...options, params: { ...options.params, member: userId } };
+    }
+
+    const body = (options.data ?? {}) as Record<string, unknown>;
+    const params = options.params ?? {};
+    for (const candidate of [params.project, params.project_id, body.project, body.project_id]) {
+      if (candidate !== undefined && candidate !== null && /^\d+$/.test(String(candidate))) {
+        await this.assertMemberOf(Number(candidate));
+      }
+    }
+
+    const projectMatch = path.match(/^\/projects\/(\d+)(?:\/|$)/);
+    if (projectMatch) await this.assertMemberOf(Number(projectMatch[1]));
+
+    const itemMatch = path.match(/^\/(userstories|tasks|issues|epics|milestones)\/(\d+)(?:\/|$)/);
+    if (itemMatch) await this.assertMemberOf(await this.projectOfItem(itemMatch[1], itemMatch[2]));
+
+    const historyMatch = path.match(/^\/history\/(userstory|task|issue|epic)\/(\d+)$/);
+    if (historyMatch) {
+      const resource = { userstory: "userstories", task: "tasks", issue: "issues", epic: "epics" }[historyMatch[1]]!;
+      await this.assertMemberOf(await this.projectOfItem(resource, historyMatch[2]));
+    }
+    return options;
+  }
+
+  private async memberships(): Promise<{ userId: number; projectIds: Set<number> }> {
+    if (this.memberCache && this.memberCache.expires > Date.now()) return this.memberCache;
+    const { data: me } = await this.rawRequest<{ id: number }>("GET", "/users/me");
+    const { data: projects } = await this.rawRequest<{ id: number }[]>("GET", "/projects", {
+      params: { member: me.id },
+      headers: { "x-disable-pagination": "True" },
+    });
+    this.memberCache = { userId: me.id, projectIds: new Set(projects.map((p) => p.id)), expires: Date.now() + 60_000 };
+    return this.memberCache;
+  }
+
+  private async assertMemberOf(projectId: number): Promise<void> {
+    let { projectIds } = await this.memberships();
+    if (!projectIds.has(projectId)) {
+      this.memberCache = null; // membership may have just been granted; re-check once before refusing
+      ({ projectIds } = await this.memberships());
+    }
+    if (!projectIds.has(projectId)) {
+      throw new TaigaApiError(
+        `Project ${projectId} is not accessible: the authenticated user is not a member of it. ` +
+          "This server only operates on projects the user participates in.",
+        403
+      );
+    }
+  }
+
+  private async projectOfItem(resource: string, id: string): Promise<number> {
+    const key = `${resource}/${id}`;
+    const cached = this.itemProjectCache.get(key);
+    if (cached !== undefined) return cached;
+    const { data } = await this.rawRequest<{ project: number }>("GET", `/${resource}/${id}`);
+    this.itemProjectCache.set(key, data.project);
+    return data.project;
+  }
+
+  private async rawRequest<T = unknown>(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    path: string,
+    options: RequestOptions = {}
   ): Promise<TaigaResponse<T>> {
     try {
       const auth = await this.ensureAuth();

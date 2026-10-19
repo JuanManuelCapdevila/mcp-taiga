@@ -15,6 +15,7 @@ interface UserStorySummary {
   status_extra_info?: { name: string };
   assigned_to_extra_info?: { full_name_display: string } | null;
   milestone_extra_info?: { name: string } | null;
+  swimlane?: number | null;
   tags: [string, string | null][] | string[];
   is_blocked: boolean;
 }
@@ -44,6 +45,7 @@ function renderDetail(item: UserStoryDetail): string {
     item.is_blocked ? `⛔ BLOCKED: ${item.blocked_note}` : "",
     `Assigned to: ${item.assigned_to_extra_info?.full_name_display ?? "unassigned"}`,
     `Sprint: ${item.milestone_extra_info?.name ?? "none"}`,
+    `Swimlane ID: ${item.swimlane ?? "none"}`,
     `Due date: ${item.due_date ?? "none"}`,
     "",
     item.description || "_No description._",
@@ -65,6 +67,7 @@ export function registerUserStoryTools(server: McpServer): void {
       assigned_to: z.number().int().optional().describe("Filter by assignee user ID"),
       tags: z.string().optional().describe("Filter by a comma-separated list of tags"),
       epic: z.number().int().optional().describe("Filter by associated epic ID"),
+      swimlane: z.number().int().optional().describe("Filter by swimlane ID (see taiga_get_project for valid IDs)"),
     },
     buildFilterParams: (f) => f,
     description:
@@ -73,7 +76,7 @@ export function registerUserStoryTools(server: McpServer): void {
       "cannot view will not be returned.\n\n" +
       "Args:\n" +
       "  - project (number | string, required): project ID or slug\n" +
-      "  - status, milestone, assigned_to, tags, epic (all optional filters)\n" +
+      "  - status, milestone, assigned_to, tags, epic, swimlane (all optional filters)\n" +
       "  - page, page_size, response_format\n\n" +
       "Returns: paginated list of stories with ref, subject, status, assignee, sprint, blocked flag.\n\n" +
       "Use when: \"show me the backlog for project X\" / \"what's in sprint Y\" / \"what is John working on\".",
@@ -98,6 +101,7 @@ export function registerUserStoryTools(server: McpServer): void {
       description: z.string().optional().describe("Detailed description (Markdown supported)"),
       status: z.number().int().optional().describe("Status ID (see taiga_get_project for valid IDs); defaults to the project's initial status"),
       milestone: z.number().int().optional().describe("Sprint/milestone ID to assign this story to"),
+      swimlane: z.number().int().optional().describe("Kanban swimlane ID (see taiga_get_project for valid IDs); defaults to the project's default swimlane"),
       assigned_to: z.number().int().optional().describe("User ID to assign this story to"),
       tags: z.array(z.string()).optional().describe("Tags to attach to the story"),
       due_date: z.string().optional().describe("Due date in YYYY-MM-DD format"),
@@ -113,7 +117,7 @@ export function registerUserStoryTools(server: McpServer): void {
         "'add_us' permission in that project's role; Taiga returns a permission error otherwise.\n\n" +
         "Args:\n" +
         "  - project (number | string, required), subject (string, required)\n" +
-        "  - description, status, milestone, assigned_to, tags, due_date (all optional)\n\n" +
+        "  - description, status, milestone, swimlane, assigned_to, tags, due_date (all optional)\n\n" +
         "Returns: the created user story object including its new 'ref' and 'id'.\n\n" +
         "Use when: \"add a new story to the backlog of project X\" / \"create a story for Y and assign it to Z\".",
       inputSchema: CreateSchema,
@@ -140,6 +144,7 @@ export function registerUserStoryTools(server: McpServer): void {
       description: z.string().optional(),
       status: z.number().int().optional(),
       milestone: z.number().int().nullable().optional().describe("Sprint ID, or null to remove from current sprint"),
+      swimlane: z.number().int().nullable().optional().describe("Kanban swimlane ID, or null to remove from its swimlane"),
       assigned_to: z.number().int().nullable().optional().describe("User ID, or null to unassign"),
       tags: z.array(z.string()).optional(),
       due_date: z.string().nullable().optional(),
@@ -155,7 +160,7 @@ export function registerUserStoryTools(server: McpServer): void {
     {
       title: "Taiga: Update User Story",
       description:
-        "Updates fields of an existing user story (status, assignee, sprint, tags, blocked state) and/or adds a comment. " +
+        "Updates fields of an existing user story (status, assignee, sprint, swimlane, tags, blocked state) and/or adds a comment. " +
         "Automatically fetches the current 'version' and resolves optimistic-concurrency conflicts by re-reading " +
         "before patching, so you never need to pass 'version' yourself. Requires the 'modify_us' permission.\n\n" +
         "Args: EITHER 'id' OR BOTH 'project' and 'ref', plus any fields to change. Only the fields you provide are updated.\n\n" +
